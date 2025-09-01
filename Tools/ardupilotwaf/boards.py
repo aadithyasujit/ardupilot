@@ -558,7 +558,10 @@ class Board:
         if cfg.options.consistent_builds:
             # if symbols are renamed we don't want them to affect the output:
             env.CXXFLAGS += ['-fno-rtti']
-            env.CFLAGS += ['-fno-rtti']
+            # avoid different filenames for the same source file
+            # affecting the compiler output:
+            env.CXXFLAGS += ['-frandom-seed=4']  # ob. xkcd
+
             # stop including a unique ID in the headers.  More useful
             # when trying to find binary differences as the build-id
             # appears to be a hash of the output products
@@ -592,7 +595,9 @@ class Board:
             self.embed_ROMFS_files(bld)
 
     def build(self, bld):
+        git_hash_ext = bld.git_head_hash(short=True, hash_abbrev=16)
         bld.ap_version_append_str('GIT_VERSION', bld.git_head_hash(short=True))
+        bld.ap_version_append_str('GIT_VERSION_EXTENDED', git_hash_ext)
         bld.ap_version_append_int('GIT_VERSION_INT', int("0x" + bld.git_head_hash(short=True), base=16))
         bld.ap_version_append_str('AP_BUILD_ROOT', bld.srcnode.abspath())
         import time
@@ -1100,6 +1105,15 @@ class sitl_periph_can_to_serial(sitl_periph):
 class esp32(Board):
     abstract = True
     toolchain = 'xtensa-esp32-elf'
+
+    def configure(self, cfg):
+        super(esp32, self).configure(cfg)
+        if cfg.env.TOOLCHAIN:
+            self.toolchain = cfg.env.TOOLCHAIN
+        else:
+            # default tool-chain for esp32-based boards:
+            self.toolchain = 'xtensa-esp32-elf'
+
     def configure_env(self, cfg, env):
         env.BOARD_CLASS = "ESP32"
 
@@ -1203,6 +1217,19 @@ class esp32(Board):
 class esp32s3(esp32):
     abstract = True
     toolchain = 'xtensa-esp32s3-elf'
+
+    def configure_env(self, cfg, env):
+        if cfg.env.TOOLCHAIN:
+            self.toolchain = cfg.env.TOOLCHAIN
+        else:
+            # default tool-chain for esp32-based boards:
+            self.toolchain = 'xtensa-esp32s3-elf'
+
+        if hasattr(self, 'hwdef'):
+            cfg.env.HWDEF = self.hwdef
+        super(esp32s3, self).configure_env(cfg, env)
+
+        cfg.load('esp32')
 
 class chibios(Board):
     abstract = True

@@ -17,7 +17,6 @@
 #include <AP_VisualOdom/AP_VisualOdom.h>
 #include <AP_Notify/AP_Notify.h>
 #include <AP_OpticalFlow/AP_OpticalFlow.h>
-#include <AP_GPS/AP_GPS.h>
 #include <RC_Channel/RC_Channel.h>
 #include <AP_Vehicle/AP_Vehicle_Type.h>
 
@@ -38,23 +37,31 @@ extern const AP_HAL::HAL& hal;
 const AP_Param::GroupInfo GCS::var_info[] {
     // @Param: _SYSID
     // @DisplayName: MAVLink system ID of this vehicle
-    // @Description: Allows setting an individual MAVLink system id for this vehicle to distinguish it from others on the same network
+    // @Description: Allows setting an individual MAVLink system id for this vehicle to distinguish it from others on the same network.
     // @Range: 1 255
     // @User: Advanced
     AP_GROUPINFO("_SYSID",    1,     GCS,  sysid,  MAV_SYSID_DEFAULT),
 
     // @Param: _GCS_SYSID
     // @DisplayName: My ground station number
-    // @Description: This controls whether packets from other than the expected GCS system ID will be accepted
+    // @Description: This sets what MAVLink source system IDs are accepted for GCS failsafe handling, RC overrides and manual control. When MAV_GCS_SYSID_HI is less than MAV_GCS_SYSID then only this value is considered to be a GCS. When MAV_GCS_SYSID_HI is greater than or equal to MAV_GCS_SYSID then the range of values between MAV_GCS_SYSID and MAV_GCS_SYSID_HI (inclusive) are all treated as valid GCS MAVLink system IDs
     // @Range: 1 255
     // @Increment: 1
     // @User: Advanced
     AP_GROUPINFO("_GCS_SYSID",    2,      GCS, mav_gcs_sysid, 255),
 
+    // @Param: _GCS_SYSID_HI
+    // @DisplayName: ground station system ID, maximum
+    // @Description: Upper limit of MAVLink source system IDs considered to be from the GCS. When this is less than MAV_GCS_SYSID then only MAV_GCS_SYSID is used as GCS ID. When this is greater than or equal to MAV_GCS_SYSID then the range of values from MAV_GCS_SYSID to MAV_GCS_SYSID_HI (inclusive) is treated as a GCS ID.
+    // @Range: 0 255
+    // @Increment: 1
+    // @User: Advanced
+    AP_GROUPINFO("_GCS_SYSID_HI",    5,   GCS, mav_gcs_sysid_high, 0),
+    
     // @Param: _OPTIONS
     // @DisplayName: MAVLink Options
     // @Description: Alters various behaviour of the MAVLink interface
-    // @Bitmask: 0:Accept MAVLink only from SYSID_GCS
+    // @Bitmask: 0:Accept MAVLink only from system IDs given by MAV_SYSID_GCS and MAV_SYSID_GCS_HI
     // @User: Advanced
     AP_GROUPINFO("_OPTIONS",    3,      GCS, mav_options, 0),
 
@@ -235,6 +242,37 @@ void GCS::send_named_float(const char *name, float value) const
     );
 #endif  // HAL_LOGGING_ENABLED
 }
+
+void GCS::send_named_string(const char *name, const char *value) const
+{
+    mavlink_named_value_string_t packet {};
+    packet.time_boot_ms = AP_HAL::millis();
+    strncpy_noterm(packet.name, name, ARRAY_SIZE(packet.name));
+    strncpy_noterm(packet.value, value, ARRAY_SIZE(packet.value));
+
+    gcs().send_to_active_channels(MAVLINK_MSG_ID_NAMED_VALUE_STRING,
+                                  (const char *)&packet);
+
+#if HAL_LOGGING_ENABLED
+// NVS is also emitted in GCS_Common.cpp
+// @LoggerMessage: NVS
+// @Description: Named Value String messages; messages sent to GCS via NAMED_VALUE_STRING
+// @Field: TimeUS: Time since system startup
+// @Field: Name: Name of string
+// @Field: Value: Value of string
+    AP::logger().WriteStreaming(
+        "NVS",
+        "TimeUS," "Name," "Value",
+        "s"       "#"     "-",
+        "F"       "-"     "-",
+        "Q"       "N"     "Z",
+        AP_HAL::micros64(),
+        name,
+        value
+    );
+#endif  // HAL_LOGGING_ENABLED
+}
+
 
 #if HAL_HIGH_LATENCY2_ENABLED
 void GCS::enable_high_latency_connections(bool enabled)
@@ -544,5 +582,16 @@ MAV_RESULT GCS::lua_command_int_packet(const mavlink_command_int_t &packet)
     return ch->handle_command_int_packet(packet, msg);
 }
 #endif // AP_SCRIPTING_ENABLED
+
+/*
+  return true if a MAVLink system ID is a GCS for this vehicle
+*/
+bool GCS::sysid_is_gcs(uint8_t _sysid) const
+{
+    if (mav_gcs_sysid_high <= mav_gcs_sysid) {
+        return mav_gcs_sysid == _sysid;
+    }
+    return _sysid >= mav_gcs_sysid && _sysid <= mav_gcs_sysid_high;
+}
 
 #endif  // HAL_GCS_ENABLED

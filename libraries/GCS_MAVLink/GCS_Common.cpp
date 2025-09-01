@@ -111,6 +111,8 @@
 extern AP_IOMCU iomcu;
 #endif
 
+#include "GCS_FTP.h"
+
 #include <ctype.h>
 
 extern const AP_HAL::HAL& hal;
@@ -222,8 +224,10 @@ bool GCS_MAVLINK::init(uint8_t instance)
 
     if (mavlink_protocol == AP_SerialManager::SerialProtocol_MAVLink2 ||
         mavlink_protocol == AP_SerialManager::SerialProtocol_MAVLinkHL) {
+#if AP_MAVLINK_SIGNING_ENABLED
         // load signing key
         load_signing_key();
+#endif  // AP_MAVLINK_SIGNING_ENABLED
     } else {
         // user has asked to only send MAVLink1
         _channel_status.flags |= MAVLINK_STATUS_FLAG_OUT_MAVLINK1;
@@ -1252,7 +1256,7 @@ uint16_t GCS_MAVLINK::get_reschedule_interval_ms(const deferred_message_bucket_t
         interval_ms *= 4;
     }
 #if AP_MAVLINK_FTP_ENABLED
-    if (AP_HAL::millis() - ftp.last_send_ms < 1000) {
+    if (AP_HAL::millis() - GCS_FTP::get_last_send_ms(chan) < 1000) {
         // we are sending ftp replies
         interval_ms *= 4;
     }
@@ -1821,7 +1825,9 @@ void GCS_MAVLINK::send_message(enum ap_message id)
 #if HAL_HIGH_LATENCY2_ENABLED
     case MSG_HIGH_LATENCY2:
 #endif
+#if AP_MAVLINK_SIGNING_ENABLED
         save_signing_timestamp(false);
+#endif // AP_MAVLINK_SIGNING_ENABLED
         // update the mask of all streaming channels
         if (is_streaming()) {
             GCS_MAVLINK::chan_is_streaming |= (1U<<(chan-MAVLINK_COMM_0));
@@ -2079,9 +2085,11 @@ GCS_MAVLINK::update_receive(uint32_t max_time_us)
 void GCS_MAVLINK::log_mavlink_stats()
 {
     uint8_t flags = 0;
+#if AP_MAVLINK_SIGNING_ENABLED
     if (signing_enabled()) {
         flags |= (uint8_t)Flags::USING_SIGNING;
     }
+#endif  // AP_MAVLINK_SIGNING_ENABLED
     if (is_streaming()) {
         flags |= (uint8_t)Flags::STREAMING;
     }
@@ -3798,7 +3806,7 @@ void GCS_MAVLINK::handle_statustext(const mavlink_message_t &msg) const
     char text[text_len] = { 'G','C','S',':'};
     uint8_t offset = strlen(text);
 
-    if (msg.sysid != gcs().sysid_gcs()) {
+    if (!gcs().sysid_is_gcs(msg.sysid)) {
         offset = hal.util->snprintf(text,
                                     max_prefix_len,
                                     "SRC=%u/%u:",
@@ -4104,7 +4112,7 @@ void GCS_MAVLINK::handle_command_ack(const mavlink_message_t &msg)
 // control of switch position and RC PWM values.
 void GCS_MAVLINK::handle_rc_channels_override(const mavlink_message_t &msg)
 {
-    if(msg.sysid != gcs().sysid_gcs()) {
+    if (!gcs().sysid_is_gcs(msg.sysid)) {
         return; // Only accept control from our gcs
     }
 
@@ -4267,7 +4275,7 @@ void GCS_MAVLINK::handle_heartbeat(const mavlink_message_t &msg)
 {
     // if the heartbeat is from our GCS then we don't failsafe for
     // now...
-    if (msg.sysid == gcs().sysid_gcs()) {
+    if (gcs().sysid_is_gcs(msg.sysid)) {
         sysid_mygcs_seen(AP_HAL::millis());
     }
 }
@@ -4329,7 +4337,7 @@ void GCS_MAVLINK::handle_message(const mavlink_message_t &msg)
 
 #if AP_MAVLINK_FTP_ENABLED
     case MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL:
-        handle_file_transfer_protocol(msg);
+        GCS_FTP::handle_file_transfer_protocol(msg, chan);
         break;
 #endif
 
@@ -7075,7 +7083,7 @@ bool GCS_MAVLINK::accept_packet(const mavlink_status_t &status,
         return true;
     }
 
-    if (msg.sysid == gcs().sysid_gcs()) {
+    if (gcs().sysid_is_gcs(msg.sysid)) {
         return true;
     }
 
@@ -7327,7 +7335,7 @@ void GCS_MAVLINK::manual_override(RC_Channel *c, int16_t value_in, const uint16_
 
 void GCS_MAVLINK::handle_manual_control(const mavlink_message_t &msg)
 {
-    if (msg.sysid != gcs().sysid_gcs()) {
+    if (!gcs().sysid_is_gcs(msg.sysid)) {
         return; // only accept control from our gcs
     }
 
